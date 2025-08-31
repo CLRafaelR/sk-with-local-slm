@@ -1,4 +1,7 @@
-from semantic_kernel import Kernel
+from semantic_kernel import (
+    Kernel,
+    __version__,
+)
 import asyncio
 import torch
 from transformers import (
@@ -6,19 +9,11 @@ from transformers import (
     logging,
 )
 
-# 会話履歴関連の設定
-from semantic_kernel.memory import (
-    SemanticTextMemory,
-    VolatileMemoryStore,
-)
-from semantic_kernel.core_plugins import TextMemoryPlugin
+# Configuration for conversational history management
 from semantic_kernel.prompt_template import PromptTemplateConfig
 from semantic_kernel.prompt_template.input_variable import InputVariable
 from semantic_kernel.contents import ChatHistory
 from semantic_kernel.functions import KernelArguments
-from semantic_kernel.connectors.ai.function_choice_behavior import (
-    FunctionChoiceBehavior,
-)
 
 import sys
 
@@ -26,45 +21,43 @@ logging.set_verbosity_info()
 
 torch.set_float32_matmul_precision("high")
 
-# Huggingface上で提供されているモデルを動かすための設定
+# Configuration settings for executing models distributed via the Hugging Face platform
 from semantic_kernel.connectors.ai.hugging_face import (
     HuggingFaceTextCompletion,
-    HuggingFaceTextEmbedding,
     HuggingFacePromptExecutionSettings,
 )
 
+print(f"The version of semantic-kernel: {__version__}")
+
+
 """
-カーネルの作成
+Kernel instantiation and initialisation
 """
 kernel = Kernel()
 
 """
-モデルの設定
+Model configuration and parameter specification
 """
-# テキスト生成モデルを指定
+# Designation of the text generation model architecture
 text_service_id = "google/gemma-3-270m-it"
 
-# padとeosのトークンを定義するためにトークナイザーを設定
+# Tokeniser configuration to establish padding and end-of-sequence token definitions
 tokenizer = AutoTokenizer.from_pretrained(
     text_service_id,
     use_fast=True,
 )
 
-# モデル起動時の設定
+# Runtime configuration parameters for model initialisation
 model_kwargs = dict(
-    attn_implementation="flash_attention_2",  # Use "flash_attention_2" when running on Ampere or newer GPU
-    torch_dtype="auto",  # What torch dtype to use, defaults to auto
-    # device_map="cuda:0",  # Let torch decide how to load the model
+    attn_implementation="flash_attention_2",
+    torch_dtype="auto",
 )
 
 pipeline_kwargs = dict(
-    # max_tokens=200, # pipeline_kwargsにmax_tokensを設定すると，kernel.invokeでエラーが出る
-    # プラグインで定義されている全ての関数を使えるようにする
+    # max_tokens=200, # Note: Specifying max_tokens within pipeline_kwargs results in kernel.invoke method failure
     do_sample=True,
     max_new_tokens=100,
-    # 各入力に対して返すテキストの候補数。ビームサーチや各種サンプリングのみ有効
     num_return_sequences=1,
-    # stop_sequences="",
     pad_token_id=tokenizer.pad_token_id,
     eos_token_id=tokenizer.eos_token_id,
     repetition_penalty=1.5,
@@ -77,26 +70,23 @@ hf_text_service = HuggingFaceTextCompletion(
     service_id=text_service_id,
     ai_model_id=text_service_id,
     task="text-generation",
-    device=0,  # GPUの場合は0以上（0で`cuda:0`指定になる），CPUの場合は-1
+    device=0,
     model_kwargs=model_kwargs,
-    # pipeline_kwargs={
-    # "temperature": 0.7,
-    # "top_p": 0.95,  # top_pだけはpipeline_kwargsから設定できる
-    # "top_k": 50,
-    # },
     pipeline_kwargs=pipeline_kwargs,
 )
 
-# Let us add this LLM to our kernel object
-# Since we are using Hugging Face model, we have imported and will use HuggingFaceTextCompletion class
-# Below we have added text generation model to our kernel
 kernel.add_service(
     service=hf_text_service,
 )
 
-# execution settings for AI model
 execution_settings = HuggingFacePromptExecutionSettings(
     service_id=text_service_id,
+    do_sample=True,  # サンプリングを有効にする（必須）
+    temperature=0.7,  # 生成のランダム性を制御
+    top_p=0.95,       # Nucleus sampling
+    top_k=50,         # Top-K sampling
+    max_tokens=100,   # 最大生成トークン数
+    extension_data=pipeline_kwargs,
 )
 
 chat_prompt_template = """{% for message in history %}
@@ -107,11 +97,11 @@ User: {{ user_input }}
 
 ChatBot: """
 
-system_prompt = """あなたは様々なテーマで会話できるChatBotです。
-明示的な指示があればそれに従ってください。最適な回答がない場合は「分かりません」と答えてください。
+system_prompt = """You are an advanced conversational agent capable of engaging with diverse thematic discourse.
+Please adhere to explicit instructions when provided. In instances where an optimal response cannot be formulated, kindly indicate "I do not possess sufficient information to provide a comprehensive answer."
 """
 
-user_input = """野生動物について教えてください。
+user_input = """Please provide comprehensive information regarding wildlife and natural fauna.
 """
 
 prompt_template_config = PromptTemplateConfig(
@@ -128,6 +118,8 @@ prompt_template_config = PromptTemplateConfig(
             name="history",
             description="The conversation history",
             is_required=True,
+            # allow_dangerously_set_content is required when updating sk from 1.31.0 to 1.36.0
+            allow_dangerously_set_content=True,
         ),
     ],
     execution_settings=execution_settings,
@@ -148,15 +140,6 @@ context = KernelArguments(
     history=chat_history,
 )
 
-"""
-stream = hf_text_service.get_streaming_text_contents(
-    prompt="野生動物について教えてください。",
-    settings=execution_settings,
-)
-async for text in stream:
-    print(str(text[0]), end="")
-"""
-
 
 async def main():
     response = await kernel.invoke(
@@ -169,8 +152,10 @@ async def main():
 # Run the main function
 if __name__ == "__main__":
     if "ipykernel" in sys.modules:
-        # Jupyter Notebookやインタラクティブウィンドウ
-        await main()
+        # For Jupyter Notebook and Interactive Window
+        import nest_asyncio
+        nest_asyncio.apply()
+        asyncio.run(main())
     else:
-        # pythonスクリプトやipythonの場合
+        # For Python and ipython scripts
         asyncio.run(main())

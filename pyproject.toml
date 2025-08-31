@@ -18,7 +18,7 @@ dependencies = [
     "python-dotenv==1.0.1",
     "requests>=2.32.3",
     "rich>=14.0.0",
-    "semantic-kernel==1.31.0",
+    "semantic-kernel>=1.36.0",
     "uvicorn>=0.35.0",
     "einops>=0.8.1",
     "flash-attn",
